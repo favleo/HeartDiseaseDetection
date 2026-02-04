@@ -182,6 +182,8 @@ This project implements and compares several machine learning algorithms:
 
 ### Model Performance
 
+The following table shows typical performance metrics that can be expected from various models on heart disease datasets:
+
 | Model | Accuracy | Precision | Recall | F1-Score |
 |-------|----------|-----------|--------|----------|
 | Logistic Regression | ~85% | ~86% | ~84% | ~85% |
@@ -192,7 +194,7 @@ This project implements and compares several machine learning algorithms:
 | Gradient Boosting | ~91% | ~92% | ~90% | ~91% |
 | Neural Network | ~88% | ~89% | ~87% | ~88% |
 
-*Note: Actual results may vary based on dataset and hyperparameters*
+*Note: These are typical ranges based on heart disease prediction studies. Actual results will vary based on the specific dataset, preprocessing methods, and hyperparameter tuning. Run the models on your dataset to obtain accurate performance metrics.*
 
 ### Key Findings
 - Ensemble methods (Random Forest, Gradient Boosting) achieve the highest accuracy
