@@ -1,0 +1,780 @@
+# Lab 02: Introduction to scikit-learn and Decision Trees
+
+This notebook introduces the **scikit-learn workflow** for supervised machine learning.
+The focus is on understanding how models are trained, evaluated, and interpreted.
+
+Performance optimisation is NOT the goal of this lab.
+
+---
+
+## Learning Outcomes
+
+By the end of this lab, you should be able to:
+1. Apply the core scikit-learn modeling workflow (train_test_split, fit, predict, evaluate) correctly.
+2. Explain the purpose of train / test splitting and why models must be evaluated on unseen data.
+3. Train and evaluate a Decision Tree classifier using scikit-learn.
+4. Explain how key Decision Tree parameters (e.g. max_depth, min_samples_leaf) affect model behaviour and performance.
+5. Interpret model outputs using feature importance, tree structure, and evaluation metrics to reason about model reliability.
+
+
+## 0. Environment Setup
+import numpy as np
+import pandas as pd
+
+from sklearn.datasets import load_breast_cancer
+from sklearn.model_selection import train_test_split
+from sklearn.tree import DecisionTreeClassifier, plot_tree
+from sklearn.metrics import accuracy_score, confusion_matrix, classification_report
+
+import matplotlib.pyplot as plt
+
+## Step 1: Load the dataset
+
+In scikit-learn, datasets are represented as **features (X)** and a **target (y)**.
+Each row in `X` corresponds to one label in `y`.
+
+data = load_breast_cancer()
+
+X = pd.DataFrame(data.data, columns=data.feature_names)
+y = pd.Series(data.target, name="target")
+
+Three points / common mistakes to highlight!
+
+### Step 1.1: y must be treated as a series
+
+In scikit-learn, the target variable
+- y is expected to be one-dimensional.
+- y represents one label per data sample
+- Each value in y corresponds to one row in X
+
+This is why y should be a Series or 1D array, not a table
+
+A pandas Series has shape:
+```
+(n_samples,)
+```
+
+A pandas DataFrame, even with one column, has shape:
+```
+(n_samples, 1)
+```
+
+Although these may look similar, scikit-learn treats them differently.
+
+scikit-learn’s model-building functions are designed to:
+- accept X as a 2D structure (features)
+- accept y as a 1D structure (labels)
+
+**Rule of thumb**
+
+If each sample has only one correct answer, y should be a Series (1D), not a DataFrame.
+
+In this lab, every data sample has one target value, so y must be one-dimensional.
+
+Problems where each sample has multiple target values use a different structure and are covered later. For instance, Neural networks often predict multiple values at once.
+
+print("y shape (correct):", y.shape)       # (n_samples,)
+
+y_wrong = pd.DataFrame(y)
+print("y_wrong shape:", y_wrong.shape)     # (n_samples, 1)
+
+#### Step 1.2: Mixing up the rows / columns of X
+
+In scikit-learn, the feature matrix X must be two-dimensional and follow this format:
+
+```
+(number of samples, number of features)
+```
+
+This means:
+- Each row in X represents one data sample
+- Each column in X represents one feature
+
+Because y contains one label per sample, the number of rows in X must match the length of y.
+
+You can check this using:
+```
+print(X.shape)    # (n_samples, n_features)
+print(len(y))     # n_samples
+```
+
+A common mistake is losing track of what rows and columns represent when:
+- selecting a single column or subset of columns
+- converting between NumPy arrays and pandas objects
+- reshaping arrays manually
+- constructing X from lists or intermediate results
+
+For example, this looks reasonable but changes the structure:
+```
+X_wrong = X["mean radius"]    # selects a single column
+print(X_wrong.shape)
+```
+
+Now X_wrong is 1D, not 2D, and no longer represents a feature matrix.
+
+Another common issue:
+
+```
+X_wrong = X.values            # convert to NumPy array
+print(X_wrong.shape)
+```
+
+Students may assume the shape is unchanged without checking.
+
+**The key requirement for scikit-learn is:**
+X.shape[0] == len(y)
+
+If this condition is not met, then:
+- rows no longer correspond to samples
+- the model cannot correctly associate features with labels
+
+Rule of thumb:
+If you cannot clearly say “one row = one data point”, then X is not in the correct format.
+
+print("X shape (correct):", X.shape)      # (n_samples, n_features)
+
+X_wrong = X.T                              # transpose
+print("X_wrong shape:", X_wrong.shape)     # (n_features, n_samples)
+
+print("y shape:", y.shape)                 # (n_samples,)
+
+### Step 1.3: Losing dimensionality when selecting a single feature
+
+In scikit-learn, the input feature matrix X must always be two-dimensional, even if you are using only one feature.
+
+The required format for X is:
+```
+(number of samples, number of features)
+```
+
+A common mistake occurs when selecting a single feature from a DataFrame.
+
+For example:
+```
+X_single = X["mean radius"]
+print(X_single.shape)
+```
+
+This returns:
+```
+(n_samples,)
+```
+
+
+Although the values look correct, X_single is now one-dimensional. It is no longer a feature matrix, but a Series of values.
+
+scikit-learn does not treat a 1D structure as a valid X input, because it breaks the assumption that each row represents one data sample
+
+To keep X in the correct format, even when using one feature, it must remain 2D.
+
+```
+X_single = X[["mean radius"]]
+print(X_single.shape)
+```
+
+Output:
+```
+(n_samples, 1)
+```
+
+This preserves:
+- rows as samples
+- columns as features
+
+A simple dimensionality check:
+```
+len(X.shape) == 2
+```
+
+If this condition is not met, X is not in the correct format for scikit-learn.
+
+**Rule of thumb:**
+
+A feature matrix is always 2D, even if there is only one feature.
+
+X.columns
+
+X_wrong_single = X["mean radius"]
+print(X_wrong_single.shape)
+
+X_single = X[["mean radius"]]
+print(X_single.shape)
+
+### Step 1.4: Mismatched number of samples
+
+This step is important because even when X and y are:
+- correctly shaped
+- correctly dimensioned
+
+they can still be misaligned. In scikit-learn, each row in X must correspond to exactly one value in y. This means:
+
+**the number of rows in X must be exactly the same as the number of values in y**
+
+You should always check:
+```
+X.shape[0] == len(y)
+```
+
+A mismatch often occurs when:
+- rows are dropped or filtered in X but not in y
+- slicing or indexing is applied inconsistently
+- missing values are removed from one but not the other
+
+For example:
+```
+X_wrong = X.iloc[:-10]
+print(X_wrong.shape)
+print(len(y))
+```
+
+Even though both X_wrong and y are valid individually, they no longer align sample-by-sample.
+
+**Rule of thumb:**
+
+Correct shape does not guarantee correct alignment.
+
+Exercise 1: Fix the data shapes
+
+In this exercise, the dataset has been prepared incorrectly. Your task is to identify and fix shape-related issues so the data is suitable for scikit-learn.
+
+# I want to select the rows in X where it is above the median.
+
+X_debug = X[X["mean radius"] > X["mean radius"].median()]
+X_debug = X_debug.values
+y_debug = y
+
+print("X_debug shape:", X_debug.shape)
+print("y_debug length:", len(y_debug))
+print("Sample counts match?", X_debug.shape[0] == len(y_debug))
+
+### Answer
+
+remove the .values line
+
+y_debug = y.loc[X_debug.index]
+
+print("X shape:", X.shape)
+print("y shape:", y.shape)
+
+X_wrong = X.iloc[:-10]                     # remove 10 rows
+print("X_wrong shape:", X_wrong.shape)
+print("y shape (unchanged):", y.shape)
+
+## Step 2: Train / Test Split
+
+We split data into training and test sets to simulate **unseen data**.
+
+### Step 2.1
+
+We split data to evaluate how well a model performs on unseen data.
+
+**Training set**
+
+Used to fit the model
+The model is allowed to learn patterns here
+
+**Validation set**
+
+Used to tune model choices (e.g. tree depth)
+The model sees this data indirectly through tuning
+
+**Test set**
+
+Used only once, at the very end. Test set must remain untouched during training and tuning.
+
+Two common setups
+
+Introductory Classical ML
+- Train → Test
+
+Model tuning / Deep learning
+- Train → Validation → Test
+
+**Rule of the thumb**
+
+The test set exists to judge the final model.
+
+from sklearn.model_selection import train_test_split
+
+# First split: Train + Temp (Validation + Test)
+X_train, X_temp, y_train, y_temp = train_test_split(
+    X,
+    y,
+    test_size=0.3,
+    random_state=42,
+    stratify=y
+)
+
+# Second split: Validation + Test
+X_val, X_test, y_val, y_test = train_test_split(
+    X_temp,
+    y_temp,
+    test_size=0.5,
+    random_state=42,
+    stratify=y_temp
+)
+
+print("Train:", X_train.shape, len(y_train))
+print("Validation:", X_val.shape, len(y_val))
+print("Test:", X_test.shape, len(y_test))
+
+Ignore the other parameters of random state, stratify for now as we are covering them in the sections below.
+
+From the "test_size" parameter, what is the percentage train, validation and test in the code above?
+
+### 2.2. Random State
+
+What happens without random_state
+- Train/test split is random
+- Results change every run
+
+It becomes very hard to debug or compare models
+
+When we set
+```
+train_test_split(..., random_state=42)
+```
+
+It makes the split reproducible and ensures that there is fair comparison between experiments
+
+**Rule of thumb**
+
+random_state does not make the model better. It makes your experiment reliable.
+
+Option A: Split without random_state
+
+from sklearn.model_selection import train_test_split
+
+X_train1, X_test1, y_train1, y_test1 = train_test_split(
+    X,
+    y,
+    test_size=0.25
+)
+
+print(X_train1.index[:5])
+
+Run the same code cell multiple times without changing anything.
+
+Observe:
+- Are the first few indices the same?
+- Are the samples identical?
+
+Option B: Split with random_state
+
+X_train2, X_test2, y_train2, y_test2 = train_test_split(
+    X,
+    y,
+    test_size=0.25,
+    random_state=42
+)
+
+print(X_train2.index[:5])
+
+Run the same code cell multiple times without changing anything.
+
+Observe:
+- Are the first few indices the same?
+- Are the samples identical?
+
+### 2.3. Class Imbalance (Stratification)
+
+The breast cancer dataset is a binary classification problem.
+
+If classes are imbalanced, a random split may distort class proportions and not represent the real problem
+
+We see class imbalaneces when
+- Training set has mostly one class
+- Test accuracy looks high / or low
+
+Stratification preserves class ratios in train and test sets and makes evaluation metrics more meaningful.
+
+**Rule of thumb**
+
+If the target is categorical, stratify by y.
+
+Step A: Check original class distribution
+
+This shows the overall class proportions in the dataset.
+
+y.value_counts(normalize=True)
+
+Step B: Split without stratification
+
+from sklearn.model_selection import train_test_split
+
+X_train_ns, X_test_ns, y_train_ns, y_test_ns = train_test_split(
+    X,
+    y,
+    test_size=0.25,
+    random_state=42
+)
+
+print("Train (no stratify):")
+print(y_train_ns.value_counts(normalize=True))
+
+print("\nTest (no stratify):")
+print(y_test_ns.value_counts(normalize=True))
+
+Step C: Split with stratification
+
+X_train_s, X_test_s, y_train_s, y_test_s = train_test_split(
+    X,
+    y,
+    test_size=0.25,
+    random_state=42,
+    stratify=y
+)
+
+print("Train (stratify=y):")
+print(y_train_s.value_counts(normalize=True))
+
+print("\nTest (stratify=y):")
+print(y_test_s.value_counts(normalize=True))
+
+Without stratification: Class proportions can drift
+
+With stratification: Train and test class ratios closely match the original dataset
+
+### Reflection Questions
+
+Why can accuracy be misleading when class proportions differ?
+
+Does stratification remove class imbalance?
+
+**Why can accuracy be misleading when class proportions differ?**
+
+Accuracy measures the overall fraction of correct predictions, not which class is being predicted correctly.
+
+When one class dominates, a model can predict the majority class all the time
+
+**Does stratification remove class imbalance?**
+
+No.
+
+Stratification:
+- Preserves existing class imbalance
+- Does not rebalance or fix it
+
+## Step 3: Train a baseline Decision Tree
+
+We train a **small, shallow tree** to keep the model interpretable.
+
+The goal is to:
+- understand how a decision tree works
+- keep the model interpretable
+- establish a baseline for comparison later
+
+At a high level, using a model in scikit-learn always follows the same pattern:
+- initialise
+- fit
+- predict
+- evaluate
+
+**This pattern applies to almost all models in scikit-learn.**
+
+**3.1 Initialising the model**
+
+```
+from sklearn.tree import DecisionTreeClassifier
+dt = DecisionTreeClassifier()
+```
+
+When we initialise the model:
+- We are creating an empty model object
+- No learning happens yet
+- No data is used at this stage
+
+Think of this as:
+- instantiating the class
+- having no learned parameters, only the default parameters
+
+**3.2 Training the model (fit)**
+
+```
+dt.fit(X_train, y_train)
+```
+
+Calling fit:
+- feeds the training data into the model
+- allows the model learn the parameters from the data
+- this builds internal decision rules
+
+For a decision tree, this means:
+- selecting features to split on
+- creating decision nodes
+- stopping when no further improvement is possible
+
+Important:
+- Only training data is used here
+- The model does not see test data
+
+**3.3 Making predictions (predict)**
+
+```
+y_pred = dt.predict(X_test)
+```
+
+Calling predict:
+- uses the trained model
+- applies learned rules to new data
+- outputs predicted labels
+
+At this stage:
+- the model is frozen
+- no further learning occurs
+
+**3.4 Evaluating predictions**
+
+```
+from sklearn.metrics import accuracy_score
+
+accuracy = accuracy_score(y_test, y_pred)
+print("Test accuracy:", accuracy)
+```
+
+This compares:
+- predicted labels (y_pred)
+- true labels (y_test)
+
+The result tells us how often the model predicts correctly on unseen data
+
+### initialize the model
+model = DecisionTreeClassifier(max_depth=3, random_state=42)
+
+### train the model
+model.fit(X_train, y_train)
+
+### making predictions
+train_pred = model.predict(X_train)
+test_pred = model.predict(X_test)
+
+### evaluating predictions
+train_acc = accuracy_score(y_train, train_pred)
+test_acc = accuracy_score(y_test, test_pred)
+
+train_acc, test_acc
+
+Training accuracy
+- How well the model fits seen data
+
+Test accuracy
+- How well the model generalises to unseen data
+
+If:
+- training accuracy > test accuracy: **overfitting**
+- both are low: **underfitting**
+- both are similar: **reasonable baseline**
+
+**Exercise 3.1: Before and After fit**
+
+Step A: Initialise the model (no training)
+
+from sklearn.tree import DecisionTreeClassifier
+
+dt = DecisionTreeClassifier()
+
+Step B: Inspect default parameters
+
+dt.get_params()
+
+Observe these parameters exist but they are set to their default parameters.
+
+Step C: Check for learned attributes (before fit)
+
+hasattr(dt, "tree_")
+
+Step D: Train the model
+
+dt.fit(X_train, y_train)
+
+Step E: Check again for learned attributes
+
+hasattr(dt, "tree_")
+
+dt.get_params()
+
+Note that get_params() does not change.
+
+get_params defines how the model is configured, or the rules to control how the model learns. It is set when the model is initialized. All of these parameters are not learned from data.
+
+## Step 4: Effect of tree depth
+
+`max_depth` controls model complexity.
+
+It limits:
+- how many levels the tree can grow
+- how many sequential decisions the model can make
+
+Increasing tree depth allows the model to fit more complex patterns but it also increases the risk of overfitting.
+
+**What happens when we increase depth?**
+
+A shallow tree has
+- Simple decision rules
+- It is easier to interpret
+- May underfit
+
+A deep tree
+- More detailed rules
+- Fits training data very well
+- May memorise noise
+
+**Depth controls the bias–variance trade-off.**
+
+### We train multiple trees with different depths and compare performance.
+
+depths = [1, 3, 5, None]
+
+for d in depths:
+    m = DecisionTreeClassifier(max_depth=d, random_state=42)
+    m.fit(X_train, y_train)
+    tr = accuracy_score(y_train, m.predict(X_train))
+    te = accuracy_score(y_test, m.predict(X_test))
+    print(f"max_depth={d} | train={tr:.3f} | test={te:.3f}")
+
+
+Training accuracy increases with depth
+
+Test accuracy:
+- increases at first
+- then plateaus or drops
+
+This gap indicates overfitting.
+
+Key signal to watch is when the training accuracy keeps improving but test accuracy stops improving.
+
+In this case, a tree with "max_depth=None" grows until it perfectly fits training data, memorise noise and generalises worse.
+
+Hence high training accuracy alone is not evidence of a good model.
+
+**Rule of thumb**
+
+Increasing model complexity always improves training performance but may hurt generalisation.
+
+## Step 5: Feature importance
+
+Decision trees provide a built-in way to rank feature importance. Feature importance tells us which features the tree relies on most when making decisions.
+
+In a decision tree:
+Each split reduces entropy / impurity. Features that reduce entropy / impurity more often and more strongly are considered more important
+
+importances = model.feature_importances_
+
+importance_df = pd.DataFrame({
+    "feature": X.columns,
+    "importance": importances
+}).sort_values(by="importance", ascending=False)
+
+importance_df.head(10)
+
+
+c/gh
+
+Higher rank / value means that the feature is used more often or more effectively.
+
+Zero value means that the feature was not used at all. The ranking matters more than exact numbers
+
+## Step 6: Visualising the Decision Tree
+
+plt.figure(figsize=(16, 8))
+plot_tree(
+    model,
+    feature_names=X.columns,
+    class_names=data.target_names,
+    filled=True,
+    max_depth=3
+)
+plt.show()
+
+
+## Step 7: Inspecting leaf behaviour
+
+For a decision tree, we are able to trace back to find the ID of the leaf node each sample ends up in.
+
+In other words:
+Each row in X_test is passed down the trained tree, we are able to trace it to find out the leaf it ends up with using apply().
+
+
+So the result tells us how many test samples end up in each leaf node.
+
+leaf_ids = model.apply(X_test)
+pd.Series(leaf_ids).value_counts()
+
+Leaves with many samples means high support leaves.
+
+Leaves with very few samples means low support leaves / very specific rules.
+
+Many tiny leaves are a sign of:
+- overfitting
+- memorisation
+
+Typically
+Shallow trees has fewer leaves with many samples per leaf
+Deep trees has many leaves with fewer samples per leaf
+
+leaf_counts = pd.Series(leaf_ids).value_counts()
+low_support_leaves = leaf_counts[leaf_counts < 5].index
+low_support_leaves
+
+low_support_mask = pd.Series(
+    leaf_ids,
+    index=X_test.index
+).isin(low_support_leaves)
+
+X_test_low_support = X_test[low_support_mask]
+y_test_low_support = y_test[low_support_mask]
+
+X_test_low_support
+
+## Final Conceptual Exercise: Applying the Workflow to the Wine Dataset
+
+The Wine dataset contains chemical measurements of wine samples:
+- alcohol
+- malic acid
+- ash
+- alcalinity of ash
+- magnesium
+- total phenols
+- flavanoids
+- nonflavanoid phenols
+- proanthocyanins
+- color intensity
+- hue
+- OD280/OD315 of diluted wines
+- proline
+
+Target variable:
+- wine class (3 classes)
+
+import numpy as np
+import pandas as pd
+
+from sklearn.datasets import load_wine
+from sklearn.model_selection import train_test_split
+from sklearn.tree import DecisionTreeClassifier
+from sklearn.metrics import accuracy_score
+
+### Task 1: Understanding the dataset
+
+Is this a classification or regression problem?
+
+How many features does X have?
+
+Is the target variable categorical or continuous?
+
+### Task 2: Data splitting strategy
+
+Split the data into train / validation / test with random_state and stratification?
+
+### Task 3: Model initialisation and training
+
+You plan to train a Decision Tree classifier.
+
+### Task 4: Model complexity
+
+You experiment with different values of max_depth. Evaluate the model for every value of max_depth to determine how it changes the accuracy.
+
+### Task 5: Feature importance
+
+For each value of max_depth, the tree produces a set of feature importance scores. See how it changes with max_depth.
+
