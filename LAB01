@@ -1,0 +1,257 @@
+# Lab 01: Data Understanding & Data Preparation with Pandas
+### CRISP-DM: DU + DP
+
+This lab accompanies the DU + DP portion of CRISP-DM. Do note this is part one or a two part series. Next week we will continue on more Data Processing.
+
+**Assumed from lecture:**
+*   numerical vs categorical (nominal/ordinal)
+*   independent vs dependent variables
+*   why models require numerical inputs.
+
+Your job here is to **apply** those ideas to a messy dataset, make decisions, and justify trade-offs.
+
+## Learning outcomes
+By the end of this lab, you should be able to:
+1. Quickly inspect a new dataset and identify potential data quality risks.
+2. Detect, locate, and quantify missing values (NaN) and explain why they matter.
+3. Apply common preparation strategies (drop, fill) and justify trade-offs.
+4. Filter and subset data correctly using boolean masks (without row-wise loops).
+5. Use indexing (`loc`, `iloc`) safely and predictably for preparation work.
+
+## How to use this notebook
+- **Do not scroll-and-run.** Attempt the exercise cells.
+- When asked for a decision, write a short rationale in plain English.
+- If your answer differs from the solution, it’s ok if it makes sense.
+
+## Dataset for this lab
+We will use a small **semiconductor wafer** dataset to simulate typical quality issues:
+- Missing values (NaN)
+- Empty strings / inconsistent entries
+- The need to filter, transform, and export a cleaned table
+
+In real projects, the dataset would be larger—your workflow should still look similar.
+
+import pandas as pd
+import numpy as np
+
+data = {
+    "wafer_id": [101, 102, 103, 104, 105, 106, 107, 108, 109, 110, 111, 112],
+    "lot_number": ["L1", "L1", "L2", "", "L2", "L3", "L3", "L3", "L4", "L4", "L5", "L5"],
+    "defect_count": [5, 2, 2, 0, np.nan, 3, 2, np.nan, 1, 2, 3, np.nan],  # rows 4, 7, 11
+    "yield_percent": [92.5, 90.2, 95.0, 93.1, 94.8, 96.0, np.nan, 89.5, 90.0, 88.0, 93.1, 92.0],  # row 6
+    "inspection_stage": ["final", "final", "initial", "initial", "final", "final", "initial", "final", "initial", "", "final", "final"]  # row 9 has empty string
+}
+
+df = pd.DataFrame(data)
+df
+
+## CRISP-DM Phase: Data Understanding
+Start by answering: **What is in this data, and can we trust it enough to proceed?**
+
+You are not cleaning anything yet. First, you inspect.
+
+df.head(3)
+df.tail(4)
+df.shape
+df.info()
+df.describe(include='all')
+# Use these quick probes to support your reasoning below.
+pd.DataFrame({
+    'nunique': df.nunique(dropna=False),
+    'missing': df.isna().sum(),
+}).sort_values('nunique', ascending=False)
+
+### Part DU-1
+##### Column semantics and variable roles
+
+In real projects, the hardest part of DU is not running `info()`. It is deciding what each column **means** and how it should be treated.
+
+Use the inspection outputs above to classify each column into **one** of the following roles:
+
+- **Candidate feature (X)**: plausible independent variable
+- **Target (y)**: dependent variable you want to predict/explain (if applicable)
+- **Identifier**: should generally *not* be used as a feature (IDs, keys)
+- **Metadata / operational context**: might be useful, but can also leak information depending on the task
+- **Ambiguous**: you are unsure; state what you would need to confirm
+
+Then classify each column’s **data type**:
+
+- Numerical (continuous / discrete)
+- Categorical (nominal / ordinal)
+- Boolean
+
+# Exercise DU-1: Variable typing and roles
+# Fill in the table below (edit the strings).
+
+du1 = pd.DataFrame({
+    'column': df.columns,
+    'role': ['' for _ in df.columns],  # e.g., 'feature', 'target', 'identifier', 'metadata', 'ambiguous'
+    'type': ['' for _ in df.columns],  # e.g., 'num-cont', 'num-disc', 'cat-nom', 'cat-ord', 'bool'
+})
+du1
+
+#### Exercise DU-2
+##### Feature leakage and 'dangerous columns'
+
+Even before modeling, you should be able to spot columns that are risky as features.
+
+1. Which column(s) could act as **identifiers** (unique or near-unique per row)?
+2. Which column(s) might create **leakage** depending on the prediction task (e.g., post-outcome measurements)?
+3. Which categorical column(s) have **high cardinality** (many unique values) and may cause one-hot explosion?
+
+## CRISP-DM Phase: Data Preparation
+Data preparation decisions are trade-offs. Each choice has costs.
+
+A common first step is to handle missing values.
+
+### Part 1 — Detecting and locating missing values
+In pandas, missing numeric values are often represented as **NaN**.
+Your first job is to:
+- detect where NaNs exist
+- count them
+- decide whether they are acceptable
+
+nan_defects = df[df["defect_count"].isna()].index
+print(f"Indexes with missing defect counts: {nan_defects.tolist()}")
+
+df[df["defect_count"].isna()].index
+df["defect_count"].isna()
+df[df["defect_count"].isna()]
+df[df["defect_count"].isna()].index
+list(df[df["defect_count"].isna()].index)
+df[df["defect_count"].notna()]
+df[df.isna().any(axis=1)]
+df["lot_number"] = df["lot_number"].replace("", np.nan)
+df["inspection_stage"] = df["inspection_stage"].replace("", np.nan)
+df = df.replace(r'^\s*$', np.nan, regex=True) # It replaces any cell that contains only whitespace (or is empty) with NaN, across the entire DataFrame.
+df.isna().sum()
+Note that if missing values are left unhandled:
+*   Silent bias through row dropping
+    *   Many downstream analyses (correlation, modeling) will automatically drop rows with NaN, changing the effective dataset without explicit awareness.
+*   Incorrect averages and rankings
+    *   If missing values are implicitly or explicitly treated as zero later, defect rates will be biased downward, leading to incorrect lot- or stage-level comparisons.
+
+### Exercise DP-1: Missing values decision
+1. Which column has the most missing values?
+
+2. For the three strategies below to handle the missing values, and state one benefit + one risk for each.
+*   Strategy A
+    *   Drop rows with missing values (listwise deletion)
+*   Strategy B
+    *   Impute missing values using contextual statistics (e.g., median by lot or stage)
+*   Strategy C
+    *   Impute values and explicitly flag augmented rows
+
+### Part 2 — Replacing missing values (fill)
+Filling missing values introduces an **assumption**.
+Common choices include:
+- mean/median (numeric)
+- a sentinel value (e.g., 0) **only if it makes domain sense**
+
+The three strategies above were example strategies. Do not assume they are always appropriate. We will practice these strategies here.
+
+data = {
+    "wafer_id": [101, 102, 103, 104, 105, 106, 107, 108, 109, 110, 111, 112],
+    "lot_number": ["L1", "L1", "L2", "", "L2", "L3", "L3", "L3", "L4", "L4", "L5", "L5"],
+    "defect_count": [5, 2, 2, 0, np.nan, 3, 2, np.nan, 1, 2, 3, np.nan],  # rows 4, 7, 11
+    "yield_percent": [92.5, 90.2, 95.0, 93.1, 94.8, 96.0, np.nan, 89.5, 90.0, 88.0, 93.1, 92.0],  # row 6
+    "inspection_stage": ["final", "final", "initial", "initial", "final", "final", "initial", "final", "initial", "", "final", "final"]  # row 9 has empty string
+}
+
+df = pd.DataFrame(data)
+
+### Exercise DP-2: Choose and justify a fill strategy
+Pick **one** fill strategy from above (or propose your own).
+1. Why is it reasonable for this dataset?
+2. What bias could it introduce?
+3. How would you communicate this assumption to a stakeholder?
+
+### Part 3 — Indexing safely with `loc` and `iloc`
+Indexing mistakes cause silent bugs (wrong rows, wrong columns).
+
+- `loc[row_labels, col_labels]` is **label-based**
+- `iloc[row_positions, col_positions]` is **position-based**
+
+In preparation work, prefer explicit, readable indexing.
+
+
+df = df.replace("", np.nan)
+df["lot_number"] = df["lot_number"].fillna(-1)
+df["inspection_stage"] = df["inspection_stage"].fillna("unknown")
+df["defect_count"] = df["defect_count"].fillna(df["defect_count"].mean())
+df["yield_percent"] = df["yield_percent"].fillna(df["yield_percent"].mean())
+
+df
+df.loc[df["wafer_id"] == 103, "lot_number"]
+df.loc[df["wafer_id"] >= 110, ["wafer_id", "lot_number", "defect_count"]]
+df.loc[2, "lot_number"]   # Row with index label 2, column "lot_number"
+df.iloc[2, 1]             # 3rd row (index 2), 2nd column (index 1)
+df.iloc[df[df["wafer_id"] >= 110].index, [1,2]]             # 3rd row (index 2), 2nd column (index 1)
+
+### Exercise DP-3: Indexing confidence check
+1. Use `loc` to select wafers with `wafer_id` 101 to 105 (inclusive) and only the columns `wafer_id`, `lot_number`, `defect_count`.
+2. Use `iloc` to select the first 3 rows and first 2 columns.
+
+Write the code yourself before running the solution.
+
+### Part 4 — Filtering using boolean masks
+Filtering is a preparation decision: you are defining what data is **relevant**.
+
+**Common mistake:** using `and/or` instead of `&/|`.
+
+Rules:
+- Wrap each condition in parentheses
+- Use `&` for AND, `|` for OR, `~` for NOT
+
+
+# Sample semiconductor data
+wafer_ids = ['w001', 'w002', 'w003', 'w004', 'w005']
+defect_counts = [5, np.nan, 12, 0, 3]
+
+# Create a dictionary
+wafer_data = {
+    "wafer_id": wafer_ids,
+    "defect_count": defect_counts
+}
+
+# Create a DataFrame with custom index
+wafer_df = pd.DataFrame(wafer_data, index=['s0', 's1', 's2', 's3', 's4'])
+
+print(wafer_df)
+
+wafer_df.loc['s2':'s4']
+wafer_df[wafer_df.defect_count > 5]
+wafer_df.defect_count > 5
+wafer_df.loc[:,['wafer_id']]
+
+# Dropping of NA columns can be done in this manner.
+# Create a DataFrame with custom index
+wafer_df = pd.DataFrame(wafer_data, index=['s0', 's1', 's2', 's3', 's4'])
+print(wafer_df)
+
+wafer_df_cleaned = wafer_df.dropna()
+print(wafer_df_cleaned)
+
+wafer_df_filtered = wafer_df[~(wafer_df['wafer_id'] == 'w003')]
+wafer_df_filtered
+wafer_df['wafer_id'] == 'w003'
+~(wafer_df['wafer_id'] == 'w003')
+wafer_df[~(wafer_df['wafer_id'] == 'w003')]
+wafer_df.drop(wafer_df[wafer_df['wafer_id'] == 'w003'].index)
+
+
+### Exercise DP-4: Filtering with trade-offs
+Scenario: you suspect that empty `lot_number` entries are data-entry errors.
+
+1. Filter out rows with empty `lot_number`.
+2. How many rows did you remove?
+
+### Exercise DP-5: Debug this filtering code
+This fails:
+```python
+df[df['defect_count'] > 2 and df['lot_number'] == 'L3']
+```
+1. Explain why it fails.
+2. Fix it.
+
+
