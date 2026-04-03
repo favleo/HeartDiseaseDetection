@@ -1,5 +1,6 @@
 # Data files (too large for GitHub)
 *.csv
+!medical_weights.csv
 
 # Python virtual environment
 .venv/
